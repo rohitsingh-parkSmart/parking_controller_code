@@ -1,0 +1,19 @@
+{
+  "tags": [
+    {
+      "tag_id": "00000CC3130800A8",
+      "company_id": "comp001",
+      "enabled": true
+    },
+    {
+      "tag_id": "000000000CC31308",
+      "company_id": "comp001",
+      "enabled": true
+    },
+    {
+      "tag_id": "1234567890ABCDEF",
+      "company_id": "comp002",
+      "enabled": true
+    }
+  ]
+}
