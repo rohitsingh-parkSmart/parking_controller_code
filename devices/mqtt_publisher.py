@@ -340,9 +340,9 @@ class MQTTPublisher:
         self,
         direction,
         tag_id,
-        company_id,
-        company_name,
         authorized,
+        company_id=None,
+        company_name=None,
         filled=None,
         capacity=None
     ):

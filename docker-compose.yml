@@ -1,0 +1,65 @@
+services:
+  parksmart:
+    build: .
+    # This "image:" name matters for auto-pull: without it, Compose
+    # only ever knows this as a local, unnamed build — there's
+    # nothing on a registry for anything to pull. Once you push a
+    # build to this name (see the deploy commands below), Watchtower
+    # can find and pull new versions of it automatically.
+    # Replace "yourdockerhubusername" with your actual Docker Hub
+    # username (or a private registry path, e.g.
+    # "registry.example.com/parksmart:latest").
+    image: c6293db624f87b5b6c69f5e64189763641d00e81974cb1c829617383428da51f/parksmart:latest
+    container_name: parksmart
+    restart: unless-stopped
+
+    # This label is what tells Watchtower it's allowed to manage
+    # this specific container (see watchtower's command below,
+    # which is scoped with --label-enable so it does NOT touch
+    # every container on the system — only ones explicitly opted
+    # in like this).
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+    # host networking: this app connects to fixed LAN IPs (UHF
+    # readers, Modbus relay, LED panel(s), MQTT broker) that live
+    # on your local network (e.g. 192.168.100.x). Host networking
+    # avoids Docker's bridge/NAT layer getting in the way of that
+    # and is the simplest correct setup here. This only works on
+    # native Linux (which is what Raspberry Pi OS is) — it does
+    # NOT work the same way on Docker Desktop for Mac/Windows.
+    network_mode: host
+
+    volumes:
+      # Config and tag database — edit these on the host directly;
+      # changes to tags.json are picked up automatically by the
+      # app's own hot-reload without restarting the container.
+      - ./config:/app/config
+      # Occupancy state, vehicle session history, and logs —
+      # persisted outside the container so a rebuild/redeploy
+      # doesn't lose them.
+      - ./data:/app/data
+
+  # Watchtower watches the Docker daemon for containers whose
+  # currently-running image differs from what's now available on
+  # the registry, and if so, pulls it and restarts that container
+  # with the new image — this is the actual "auto pull" mechanism.
+  #
+  # SECURITY NOTE: Watchtower needs access to the Docker socket
+  # (/var/run/docker.sock) to do this, which effectively gives it
+  # control over the whole Docker daemon on this host. Only run
+  # this on a host you trust and control the registry credentials
+  # for. --label-enable below restricts WHICH containers it will
+  # actually touch (only ones labeled watchtower.enable=true above)
+  # but it still technically has broader access via the socket.
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - "--interval"
+      - "300"          # check for a new image every 300 seconds (5 min)
+      - "--label-enable"
+      - "--cleanup"     # remove old images after a successful update

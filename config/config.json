@@ -1,132 +1,112 @@
-/home/pi/parksmart/
-├── main.py
-├── config/
-│   ├── config.json
-│   └── tags.json
-├── devices/
-│   ├── __init__.py
-│   ├── uhf_reader.py
-│   ├── modbus_relay.py
-│   └── led_display.py
-├── core/
-│   ├── __init__.py
-│   ├── controller.py
-│   ├── occupancy.py
-│   ├── tag_manager.py
-│   ├── event_manager.py
-│   └── relay_manager.py
-├── data/
-│   ├── occupancy/
-│   │   ├── comp001.txt
-│   │   ├── comp002.txt
-│   │   ├── comp003.txt
-│   │   ├── comp004.txt
-│   │   ├── comp005.txt
-│   │   └── comp006.txt
-│   └── logs/
-└── tools/
-    └── manual_exit.py
-
-
-
-    {
-  "application": {
-    "name": "PARKSMART",
-    "log_level": "INFO",
-    "duplicate_window_seconds": 10,
-    "led_refresh_seconds": 2
-  },
-
-  "readers": {
-    "entry": {
-      "id": "UHF01",
-      "ip": "192.168.100.100",
-      "port": 60000,
-      "manufacturer": "syrotech",
-      "model": "uhfL",
-      "reader_type": "UHF",
-      "direction": "ENTRY",
-      "reconnect_seconds": 3,
-      "socket_timeout": 5
+{
+    "entry_reader": {
+        "host": "192.168.100.100",
+        "port": 60000,
+        "connect_timeout": 3,
+        "read_timeout": 1,
+        "reconnect_delay": 2
     },
-
-    "exit": {
-      "id": "UHF02",
-      "ip": "192.168.100.101",
-      "port": 60000,
-      "manufacturer": "syrotech",
-      "model": "uhfL",
-      "reader_type": "UHF",
-      "direction": "EXIT",
-      "reconnect_seconds": 3,
-      "socket_timeout": 5
-    }
-  },
-
-  "modbus": {
-    "ip": "192.168.100.7",
-    "port": 502,
-    "slave_id": 1,
-    "entry_relay_address": 0,
-    "exit_relay_address": 1,
-    "relay_on_value": 1,
-    "relay_off_value": 0,
-    "pulse_seconds": 1.0,
-    "timeout_seconds": 2,
-    "retries": 2
-  },
-
-  "led": {
-    "ip": "192.168.100.73",
-    "port": 8000,
-    "connect_timeout": 2,
-    "response_timeout": 1,
-    "retries": 2,
-    "panel_width": 96,
-    "panel_height": 64,
-    "font_width": 6,
-    "row_height": 9
-  },
-
-  "parking": {
-    "name": "PARK SMART"
-  },
-
-  "companies": [
-    {
-      "id": "comp001",
-      "name": "PARK LOGI",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp001.txt"
+    "exit_reader": {
+        "host": "192.168.100.101",
+        "port": 60000,
+        "connect_timeout": 3,
+        "read_timeout": 1,
+        "reconnect_delay": 2
     },
-    {
-      "id": "comp002",
-      "name": "PARK RET",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp002.txt"
+    "modbus": {
+        "host": "192.168.100.7",
+        "port": 502,
+        "unit_id": 1,
+        "entry_relay_address": 0,
+        "exit_relay_address": 1,
+        "entry_light_relay_address": 2,
+        "exit_light_relay_address": 3,
+        "pulse_seconds": 0.5,
+        "light_pulse_seconds": 2.0,
+        "timeout": 1.0,
+        "connect_timeout": 1.0,
+        "retries": 2,
+        "relay_on_value": true,
+        "relay_off_value": false
     },
-    {
-      "id": "comp003",
-      "name": "ACME LABS",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp003.txt"
+    "led": {
+        "enabled": true,
+        "ip": "192.168.100.73",
+        "port": 8000,
+        "mall_name": "DYP City Mall",
+        "module_width": 4,
+        "module_height": 3,
+        "width": 128,
+        "height": 48,
+        "font_size": 16,
+        "retries": 2,
+        "connect_timeout": 2,
+        "response_timeout": 1
     },
-    {
-      "id": "comp004",
-      "name": "ACME TaTa",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp004.txt"
+    "led2": {
+        "enabled": false,
+        "ip": "192.168.100.74",
+        "port": 8000,
+        "mall_name": "DYP City Mall",
+        "width": 128,
+        "height": 48,
+        "font_size": 16,
+        "retries": 2,
+        "connect_timeout": 2,
+        "response_timeout": 1
     },
-    {
-      "id": "comp005",
-      "name": "ACME TCS",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp005.txt"
+    "mqtt": {
+        "enabled": false,
+        "host": "192.168.100.50",
+        "port": 1883,
+        "username": null,
+        "password": null,
+        "client_id": "parksmart",
+        "base_topic": "parksmart",
+        "keepalive": 30,
+        "qos": 0
     },
-    {
-      "id": "comp006",
-      "name": "ACME TCS 2",
-      "capacity": 20,
-      "occupancy_file": "data/occupancy/comp006.txt"
-    }
-  ]
+    "controller": {
+        "duplicate_seconds": 30,
+        "led_enabled": true,
+        "led_queue_delay": 0.05
+    },
+    "companies": [
+        {
+            "id": "COMP001",
+            "name": "PARK LOGI",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp001.txt"
+        },
+        {
+            "id": "COMP002",
+            "name": "PARK RET",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp002.txt"
+        },
+        {
+            "id": "COMP003",
+            "name": "ACME LABS",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp003.txt"
+        },
+        {
+            "id": "COMP004",
+            "name": "ACME TaTa",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp004.txt"
+        },
+        {
+            "id": "COMP005",
+            "name": "ACME TCS",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp005.txt"
+        },
+        {
+            "id": "COMP006",
+            "name": "ACME TCS 2",
+            "capacity": 20,
+            "occupancy_file": "data/occupancy/comp006.txt"
+        }
+    ]
+}
