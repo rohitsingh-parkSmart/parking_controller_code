@@ -38,7 +38,7 @@
         "module_height": 3,
         "width": 128,
         "height": 48,
-        "font_size": 16,
+        "font_size": 8,
         "retries": 2,
         "connect_timeout": 2,
         "response_timeout": 1
