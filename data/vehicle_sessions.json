@@ -1,0 +1,20 @@
+{
+    "0000000000140145": {
+        "tag_id": "0000000000140145",
+        "car_number": "",
+        "company_id": null,
+        "company_name": null,
+        "authorized": false,
+        "entry_time": 1789377043.58254,
+        "exit_time": null
+    },
+    "000000000CC31308": {
+        "tag_id": "000000000CC31308",
+        "car_number": "",
+        "company_id": null,
+        "company_name": null,
+        "authorized": false,
+        "entry_time": 1789377058.6535273,
+        "exit_time": null
+    }
+}

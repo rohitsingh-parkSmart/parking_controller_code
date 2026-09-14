@@ -59,7 +59,10 @@ class LEDDisplay:
         text,
         color="green",
         bold=True,
-        scroll=None
+        scroll=None,
+        size=None,
+        top_padding=0,
+        bottom_padding=2
     ):
 
         # scroll=True forces sliding text, scroll=False forces
@@ -67,7 +70,7 @@ class LEDDisplay:
         # whether the text is too wide for the display.
 
         sliding = (
-            self.needs_scroll(text)
+            len(text) * (size or self.font_size) * 0.75 > self.width
             if scroll is None
             else scroll
         )
@@ -86,7 +89,7 @@ class LEDDisplay:
 
         return {
             "text": text,
-            "size": self.font_size,
+            "size": size or self.font_size,
             "bold": bold,
             "weight": weight_label,
             "font_weight": weight_label,
@@ -94,7 +97,8 @@ class LEDDisplay:
             "sliding": sliding,
             "left_padding": 2,
             "right_padding": 2,
-            "bottom_padding": 2,
+            "top_padding": top_padding,
+            "bottom_padding": bottom_padding,
             "color": color
         }
 
@@ -132,7 +136,8 @@ class LEDDisplay:
                         vehicle_number or "",
                         color="white",
                         bold=True,
-                        scroll=False
+                        scroll=False,
+                        size=8
                     ),
                     self.row(
                         rfid_status or "VISITOR",
@@ -142,7 +147,14 @@ class LEDDisplay:
                             else "yellow"
                         ),
                         bold=True,
-                        scroll=False
+                        scroll=False,
+                        size=(
+                            12
+                            if (rfid_status or "VISITOR") == "VISITOR"
+                            else 8
+                        ),
+                        top_padding=2,
+                        bottom_padding=2
                     )
                 ]
             }

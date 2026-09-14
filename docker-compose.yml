@@ -1,6 +1,6 @@
 services:
   controller:
-    build: .
+    build: 
     # This "image:" name matters for auto-pull: without it, Compose
     # only ever knows this as a local, unnamed build — there's
     # nothing on a registry for anything to pull. Once you push a
