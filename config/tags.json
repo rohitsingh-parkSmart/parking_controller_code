@@ -3,12 +3,16 @@
     {
       "tag_id": "00000CC3130800A8",
       "company_id": "comp001",
-      "enabled": true
+      "enabled": true,
+      "car_number": "MH12AB1234",
+      "owner": true
     },
     {
       "tag_id": "000000000CC31308",
       "company_id": "comp001",
-      "enabled": true
+      "enabled": true,
+      "car_number": "UP81DV9624",
+      "owner": true
     },
     {
       "tag_id": "1234567890ABCDEF",

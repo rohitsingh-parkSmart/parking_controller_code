@@ -1,17 +1,15 @@
 services:
-  parksmart:
+  controller:
     build: .
     # This "image:" name matters for auto-pull: without it, Compose
     # only ever knows this as a local, unnamed build — there's
     # nothing on a registry for anything to pull. Once you push a
     # build to this name (see the deploy commands below), Watchtower
     # can find and pull new versions of it automatically.
-    # Replace "yourdockerhubusername" with your actual Docker Hub
-    # username (or a private registry path, e.g.
-    # "registry.example.com/parksmart:latest").
-    image: c6293db624f87b5b6c69f5e64189763641d00e81974cb1c829617383428da51f/parksmart:latest
-    container_name: parksmart
-    restart: unless-stopped
+    # Override PARKSMART_IMAGE for a different registry or release tag.
+    image: ${PARKSMART_IMAGE:-ghcr.io/rohitsingh-parksmart/parksmart:rpi-v20260911}
+    container_name: controller
+    restart: always
 
     # This label is what tells Watchtower it's allowed to manage
     # this specific container (see watchtower's command below,

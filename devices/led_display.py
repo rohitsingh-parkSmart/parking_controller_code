@@ -89,7 +89,9 @@ class LEDDisplay:
             "font_weight": weight_label,
             "style": style_label,
             "sliding": sliding,
-            "bottom_padding": 1,
+            "left_padding": 2,
+            "right_padding": 2,
+            "bottom_padding": 2,
             "color": color
         }
 
@@ -100,8 +102,47 @@ class LEDDisplay:
     def build_payload(
         self,
         parking_name,
-        companies
+        companies,
+        vehicle_number="",
+        rfid_status="",
+        display_mode="parking"
     ):
+
+        if display_mode == "full":
+
+            return {
+                "commands": [
+                    self.row(
+                        "PARKING FULL",
+                        color="red",
+                        bold=True,
+                        scroll=False
+                    )
+                ]
+            }
+
+        if display_mode == "rfid":
+
+            return {
+                "commands": [
+                    self.row(
+                        vehicle_number or "",
+                        color="white",
+                        bold=True,
+                        scroll=False
+                    ),
+                    self.row(
+                        rfid_status or "VISITOR",
+                        color=(
+                            "green"
+                            if rfid_status in ("REGISTERED", "OWNER")
+                            else "yellow"
+                        ),
+                        bold=True,
+                        scroll=False
+                    )
+                ]
+            }
 
         total_capacity = sum(
             c["capacity"]
@@ -127,7 +168,7 @@ class LEDDisplay:
             self.row(
                 parking_name,
                 color="yellow",
-                bold=False,
+                bold=True,
                 scroll=True
             )
         )
@@ -138,7 +179,7 @@ class LEDDisplay:
             self.row(
                 "Total: {}".format(total_capacity),
                 color="white",
-                bold=False,
+                bold=True,
                 scroll=False
             )
         )
@@ -147,7 +188,7 @@ class LEDDisplay:
             self.row(
                 "Available: {}".format(total_available),
                 color="green",
-                bold=False,
+                bold=True,
                 scroll=False
             )
         )
@@ -156,7 +197,7 @@ class LEDDisplay:
             self.row(
                 "Occupied: {}".format(total_filled),
                 color="red",
-                bold=False,
+                bold=True,
                 scroll=False
             )
         )
@@ -256,12 +297,18 @@ class LEDDisplay:
         self,
         parking_name,
         companies,
-        reason="update"
+        reason="update",
+        vehicle_number="",
+        rfid_status="",
+        display_mode="parking"
     ):
 
         payload = self.build_payload(
             parking_name,
-            companies
+            companies,
+            vehicle_number=vehicle_number,
+            rfid_status=rfid_status,
+            display_mode=display_mode
         )
 
         thread = threading.Thread(

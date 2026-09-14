@@ -285,7 +285,7 @@ class UHFReader:
         try:
 
             self.log(
-                "info",
+                "debug",
                 "%s RAW HEX | %s",
                 self.direction,
                 frame.hex(" ").upper()
@@ -303,7 +303,7 @@ class UHFReader:
                 ascii_data = ""
 
             self.log(
-                "info",
+                "debug",
                 "%s RAW ASCII | %s",
                 self.direction,
                 ascii_data
@@ -316,7 +316,7 @@ class UHFReader:
             if not tag_id:
 
                 self.log(
-                    "warning",
+                    "debug",
                     "%s TAG NOT FOUND",
                     self.direction
                 )

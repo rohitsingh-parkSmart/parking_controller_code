@@ -1353,7 +1353,7 @@ class ParkSmartController:
             self.led2 = LEDDisplay(
                 ip=led2_cfg.get(
                     "ip",
-                    "192.168.100.74"
+                    "192.168.100.10"
                 ),
                 port=int(
                     led2_cfg.get(
@@ -1620,6 +1620,29 @@ class ParkSmartController:
 
             return
 
+        # Capacity is checked immediately after the RFID read so
+        # no entry tag can reach authorization or the relay when
+        # the entire parking area is full.
+        if direction == "ENTRY":
+
+            filled, capacity = self.total_occupancy()
+
+            if filled >= capacity:
+
+                logger.warning(
+                    "ENTRY BLOCKED | PARKING FULL | TAG=%s | %s/%s",
+                    tag_id,
+                    filled,
+                    capacity
+                )
+
+                self.show_parking_full(
+                    direction,
+                    tag_id
+                )
+
+                return
+
         # ----------------------------------------------------
         # Find authorized tag
         # ----------------------------------------------------
@@ -1641,7 +1664,8 @@ class ParkSmartController:
                 direction,
                 tag_id,
                 None,
-                False
+                False,
+                self.tag_map.get(tag_id)
             )
 
             self.publish_mqtt_event(
@@ -1686,7 +1710,8 @@ class ParkSmartController:
                     direction,
                     tag_id,
                     company,
-                    False
+                    False,
+                    self.tag_map.get(tag_id)
                 )
 
                 self.publish_mqtt_event(
@@ -1724,7 +1749,8 @@ class ParkSmartController:
                 direction,
                 tag_id,
                 company,
-                False
+                False,
+                self.tag_map.get(tag_id)
             )
 
             self.publish_mqtt_event(
@@ -1760,7 +1786,8 @@ class ParkSmartController:
             direction,
             tag_id,
             company,
-            True
+            True,
+            self.tag_map.get(tag_id)
         )
 
         self.publish_mqtt_event(
@@ -1872,12 +1899,68 @@ class ParkSmartController:
     # LED
     # ========================================================
 
+    def show_parking_full(
+        self,
+        direction,
+        tag_id
+    ):
+
+        companies_payload = [
+
+            {
+                "name": c.name,
+                "capacity": c.capacity,
+                "occupancy": c.filled
+            }
+
+            for c in self.companies
+        ]
+
+        reason = "{}_parking_full".format(
+            direction.lower()
+        )
+
+        logger.info(
+            "LED PARKING FULL | direction=%s | TAG=%s",
+            direction,
+            tag_id
+        )
+
+        if self.led is not None:
+
+            self.led.update_async(
+                parking_name=self.config.get(
+                    "led", {}
+                ).get(
+                    "mall_name",
+                    "PARK SMART"
+                ),
+                companies=companies_payload,
+                reason=reason,
+                display_mode="full"
+            )
+
+        if self.led2 is not None:
+
+            self.led2.update_async(
+                parking_name=self.config.get(
+                    "led2", {}
+                ).get(
+                    "mall_name",
+                    "PARK SMART"
+                ),
+                companies=companies_payload,
+                reason=reason,
+                display_mode="full"
+            )
+
     def update_led_event(
         self,
         direction,
         tag_id,
         company,
-        authorized
+        authorized,
+        tag_item=None
     ):
 
         # Only bail out entirely if NEITHER panel is configured.
@@ -1911,6 +1994,44 @@ class ParkSmartController:
             "vehicle" if authorized else "denied"
         )
 
+        vehicle_number = ""
+        rfid_status = "VISITOR"
+
+        if tag_item:
+
+            vehicle_number = str(
+                tag_item.get(
+                    "car_number",
+                    tag_item.get(
+                        "vehicle_number",
+                        tag_item.get("owner_car_number", "")
+                    )
+                )
+                or ""
+            ).strip().upper()
+
+            owner_value = tag_item.get(
+                "owner",
+                tag_item.get("is_owner", False)
+            )
+
+            role = str(
+                tag_item.get(
+                    "status",
+                    tag_item.get(
+                        "rfid_status",
+                        tag_item.get("role", "")
+                    )
+                )
+                or ""
+            ).strip().upper()
+
+            rfid_status = (
+                "OWNER"
+                if owner_value or role == "OWNER"
+                else "REGISTERED"
+            )
+
         if self.led is not None:
 
             self.led.update_async(
@@ -1921,7 +2042,8 @@ class ParkSmartController:
                     "PARK SMART"
                 ),
                 companies=companies_payload,
-                reason=reason
+                reason=reason,
+                display_mode="parking"
             )
 
         if self.led2 is not None:
@@ -1934,7 +2056,10 @@ class ParkSmartController:
                     "PARK SMART"
                 ),
                 companies=companies_payload,
-                reason=reason
+                reason=reason,
+                vehicle_number=vehicle_number,
+                rfid_status=rfid_status,
+                display_mode="rfid"
             )
 
     # ========================================================
