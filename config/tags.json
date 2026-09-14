@@ -5,19 +5,28 @@
       "company_id": "comp001",
       "enabled": true,
       "car_number": "MH12AB1234",
-      "owner": true
+      "owner": "RAJ SHARMA"
     },
     {
       "tag_id": "000000000CC31308",
       "company_id": "comp001",
       "enabled": true,
       "car_number": "UP81DV9624",
-      "owner": true
+      "owner": "NEHA VERMA"
     },
     {
       "tag_id": "1234567890ABCDEF",
       "company_id": "comp002",
-      "enabled": true
+      "enabled": true,
+      "car_number": "DL01AB0001",
+      "owner": "AMIT PATEL"
+    },
+    {
+      "tag_id": "000000001A2B3C4D",
+      "company_id": "comp002",
+      "enabled": true,
+      "car_number": "MH14CD5678",
+      "owner": ""
     }
   ]
 }

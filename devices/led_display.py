@@ -2,6 +2,7 @@ import json
 import logging
 import socket
 import threading
+import time
 
 
 class LEDDisplay:
@@ -36,6 +37,12 @@ class LEDDisplay:
 
         self._last_payload = None
         self._payload_lock = threading.Lock()
+
+        # Result of the most recent real send, used for status
+        # reporting so the status thread does not have to open its
+        # own competing connection to the panel.
+        self._last_result = None
+        self._last_attempt = 0.0
 
     # ---------------------------------------------------------
     # TEXT WIDTH
@@ -112,7 +119,8 @@ class LEDDisplay:
         companies,
         vehicle_number="",
         rfid_status="",
-        display_mode="parking"
+        display_mode="parking",
+        registered=False
     ):
 
         if display_mode == "full":
@@ -123,110 +131,167 @@ class LEDDisplay:
                         "PARKING FULL",
                         color="red",
                         bold=True,
-                        scroll=False
+                        scroll=True
                     )
                 ]
             }
 
         if display_mode == "rfid":
 
+            # Upper panel  = car number (matched vehicles only).
+            # Lower panel  = owner name / REGISTERED, or VISITOR.
+            #
+            # The tag id is deliberately never part of either row —
+            # it is an internal identifier and must not reach the
+            # panel.
+
+            status = rfid_status or "VISITOR"
+
+            # Trust the caller's match result rather than comparing
+            # the status text, so an owner literally named e.g.
+            # "Visitor Account" is still rendered as registered.
+            is_visitor = not registered
+
+            rows = []
+
+            if vehicle_number:
+
+                rows.append(
+                    self.row(
+                        vehicle_number,
+                        color="white",
+                        bold=True,
+                        # scroll=None => slide only if the plate is
+                        # genuinely wider than the panel, so a long
+                        # number is never silently clipped.
+                        scroll=None,
+                        size=self.font_size,
+                        bottom_padding=2
+                    )
+                )
+
+            # Status always occupies the last row of the panel.
+            rows.append(
+                self.row(
+                    status,
+                    color=(
+                        "yellow"
+                        if is_visitor
+                        else "green"
+                    ),
+                    # VISITOR is emphasised; a registered owner name
+                    # stays normal weight at size 8.
+                    bold=is_visitor,
+                    scroll=None,
+                    size=8,
+                    bottom_padding=2
+                )
+            )
+
+            return {
+                "commands": rows
+            }
+
+        if display_mode == "parking_summary":
+
+            total_capacity = sum(
+                c["capacity"]
+                for c in companies
+            )
+
+            total_filled = sum(
+                c["occupancy"]
+                for c in companies
+            )
+
+            total_available = max(
+                0,
+                total_capacity - total_filled
+            )
+
             return {
                 "commands": [
                     self.row(
-                        vehicle_number or "",
-                        color="white",
+                        parking_name,
+                        color="yellow",
                         bold=True,
-                        scroll=False,
-                        size=8
+                        scroll=True,
+                        size=16,
+                        bottom_padding=2
                     ),
                     self.row(
-                        rfid_status or "VISITOR",
-                        color=(
-                            "green"
-                            if rfid_status in ("REGISTERED", "OWNER")
-                            else "yellow"
-                        ),
+                        "Total: {}".format(total_capacity),
+                        color="white",
                         bold=True,
-                        scroll=False,
-                        size=(
-                            12
-                            if (rfid_status or "VISITOR") == "VISITOR"
-                            else 8
-                        ),
-                        top_padding=2,
+                        scroll=None,
+                        size=16,
+                        bottom_padding=2
+                    ),
+                    self.row(
+                        "Available: {}".format(total_available),
+                        color="green",
+                        bold=True,
+                        scroll=None,
+                        size=16,
+                        bottom_padding=2
+                    ),
+                    self.row(
+                        "Occupied: {}".format(total_filled),
+                        color="red",
+                        bold=True,
+                        scroll=None,
+                        size=16,
                         bottom_padding=2
                     )
                 ]
             }
 
-        total_capacity = sum(
-            c["capacity"]
-            for c in companies
-        )
-
-        total_filled = sum(
-            c["occupancy"]
-            for c in companies
-        )
-
-        total_available = max(
-            0,
-            total_capacity - total_filled
-        )
-
-        rows = []
-
-        # Line 1: mall/parking name — scrolls (matches the
-        # existing behavior of the header row scrolling while
-        # everything else stays static).
-        rows.append(
-            self.row(
-                parking_name,
-                color="yellow",
-                bold=True,
-                scroll=True
-            )
-        )
-
-        # Lines 2-4: mall-wide summary, static, in the exact
-        # "Total / Available / Occupied" format requested.
-        rows.append(
-            self.row(
-                "Total: {}".format(total_capacity),
-                color="white",
-                bold=True,
-                scroll=False
-            )
-        )
-
-        rows.append(
-            self.row(
-                "Available: {}".format(total_available),
-                color="green",
-                bold=True,
-                scroll=False
-            )
-        )
-
-        rows.append(
-            self.row(
-                "Occupied: {}".format(total_filled),
-                color="red",
-                bold=True,
-                scroll=False
-            )
-        )
-
-        # Only these 4 rows are shown — mall name + Total/
-        # Available/Occupied. No per-company breakdown.
-
+        # Idle / no tag detected: parking name only — large and
+        # bold, nothing else. No occupancy or tag information.
         return {
-            "commands": rows
+            "commands": [
+                self.row(
+                    parking_name,
+                    color="yellow",
+                    bold=True,
+                    # Slide only when the name genuinely overflows
+                    # the panel width.
+                    scroll=None,
+                    size=self.font_size,
+                    bottom_padding=2
+                )
+            ]
         }
 
     # ---------------------------------------------------------
     # SEND
     # ---------------------------------------------------------
+
+    def _record_result(self, ok):
+
+        self._last_result = bool(ok)
+        self._last_attempt = time.monotonic()
+
+    def status(self, max_age=30.0):
+        """
+        Online state inferred from the last real send, or None when
+        that information is too old to trust.
+
+        Callers (the device-status thread) use this instead of
+        opening their own probe connection: these panels accept one
+        TCP client at a time, so a probe running alongside a
+        tag-triggered send can make that send fail.
+        """
+
+        if self._last_result is None:
+            return None
+
+        if (
+            time.monotonic() - self._last_attempt
+        ) > max_age:
+            return None
+
+        return self._last_result
 
     def send(self, payload):
 
@@ -276,31 +341,43 @@ class LEDDisplay:
                             if response_text:
 
                                 self.logger.info(
-                                    "LED RESPONSE | %s",
+                                    "LED RESPONSE | %s:%s | %s",
+                                    self.ip,
+                                    self.port,
                                     response_text
                                 )
 
                         except socket.timeout:
 
                             self.logger.warning(
-                                "LED NO ACK | display may still have accepted JSON"
+                                "LED NO ACK | %s:%s | display may still have accepted JSON",
+                                self.ip,
+                                self.port
                             )
 
                         self.logger.info(
-                            "LED DATA SENT | attempt=%s | bytes=%s",
+                            "LED DATA SENT | %s:%s | attempt=%s | bytes=%s",
+                            self.ip,
+                            self.port,
                             attempt,
                             len(data)
                         )
+
+                        self._record_result(True)
 
                         return True
 
                 except Exception as exc:
 
                     self.logger.error(
-                        "LED ERROR | attempt=%s | %s",
+                        "LED ERROR | %s:%s | attempt=%s | %s",
+                        self.ip,
+                        self.port,
                         attempt,
                         exc
                     )
+
+            self._record_result(False)
 
             return False
 
@@ -316,6 +393,7 @@ class LEDDisplay:
         vehicle_number="",
         rfid_status="",
         display_mode="parking",
+        registered=False,
         force=False
     ):
 
@@ -324,7 +402,8 @@ class LEDDisplay:
             companies,
             vehicle_number=vehicle_number,
             rfid_status=rfid_status,
-            display_mode=display_mode
+            display_mode=display_mode,
+            registered=registered
         )
 
         payload_key = json.dumps(
@@ -343,6 +422,7 @@ class LEDDisplay:
         thread = threading.Thread(
             target=self._update_worker,
             args=(payload, reason),
+            name="LED-{}".format(self.ip),
             daemon=True
         )
 
@@ -372,6 +452,8 @@ class LEDDisplay:
                 self._last_payload = None
 
         self.logger.error(
-            "LED UPDATE FAILED | reason=%s",
+            "LED UPDATE FAILED | %s:%s | reason=%s",
+            self.ip,
+            self.port,
             reason
         )

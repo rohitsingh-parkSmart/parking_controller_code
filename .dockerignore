@@ -1,9 +1,39 @@
+# Keep the build context small and make sure nothing host-specific
+# or secret-bearing can be baked into the image. Note that config/
+# and data/ are excluded here AND not COPYed in the Dockerfile —
+# they arrive as bind mounts at runtime instead.
+
 __pycache__/
 *.pyc
+*.pyo
+
 .git/
 .gitignore
+.github/
+.claude/
+
 venv/
 .venv/
+env/
+
+# Runtime state and secrets — mounted, never copied.
 config/
 data/
 *.log
+*.tmp
+
+# Dead code: nothing in the app imports core/, so it is not part of
+# the image (see the Dockerfile COPY list).
+core/
+tools/
+
+# Build/deploy tooling is not needed inside the image.
+Dockerfile
+.dockerignore
+docker-compose.yml
+Makefile
+build.sh
+README*
+
+# Scratch files.
+_verify_*.py

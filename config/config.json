@@ -70,7 +70,8 @@
         "duplicate_seconds": 30,
         "led_enabled": true,
         "led_queue_delay": 0.05,
-        "led_refresh_seconds": 3
+        "led_refresh_seconds": 3,
+        "led_hold_seconds": 5
     },
     "companies": [
         {

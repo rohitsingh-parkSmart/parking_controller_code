@@ -210,7 +210,11 @@ DEFAULT_CONFIG = {
 
         "led_queue_delay": 0.05,
 
-        "led_refresh_seconds": 3
+        "led_refresh_seconds": 3,
+
+        # How long a tag screen (car number + owner/VISITOR) stays
+        # up before the panels fall back to the parking name.
+        "led_hold_seconds": 5
     },
 
     "companies": [
@@ -642,6 +646,7 @@ class ParkSmartController:
         self.lock = threading.RLock()
 
         self.companies = []
+        self.companies_by_id = {}
 
         self.tag_map = {}
 
@@ -682,6 +687,7 @@ class ParkSmartController:
             None
         )
         self._last_led_mode = "parking"
+        self._led_state_time = time.monotonic()
 
         self.load_vehicle_sessions()
 
@@ -690,6 +696,13 @@ class ParkSmartController:
         self.load_tags()
 
         self.setup_devices()
+
+        # Put the parking name up straight away rather than leaving
+        # the panels on whatever they last showed until the first
+        # refresh tick.
+        self.show_parking_status(
+            force=True
+        )
 
         self.start_tag_sync()
 
@@ -748,6 +761,10 @@ class ParkSmartController:
                 company
             )
 
+            self.companies_by_id[
+                company.id.upper()
+            ] = company
+
             logger.info(
                 "COMPANY LOADED | %s | %s/%s",
                 name,
@@ -767,6 +784,41 @@ class ParkSmartController:
         )
 
         new_tag_map = {}
+
+        # tags.json comes in two shapes in the field:
+        #
+        #   {"tags": [ {...}, {...} ]}   <- what config/tags.json and
+        #                                   the admin tool write
+        #   {"<tag_id>": {...}, ...}     <- legacy tag_id -> record map
+        #
+        # Unwrap the wrapper object first. Without this the wrapper
+        # form falls into the tag_id-map branch below, where the
+        # literal key "tags" is parsed as a tag id and its array as a
+        # company_id — leaving a single bogus entry and making every
+        # real tag resolve as an unmatched VISITOR.
+        if isinstance(
+            data,
+            dict
+        ):
+
+            for wrapper_key in (
+                "tags",
+                "tag_list",
+                "items"
+            ):
+
+                wrapped = data.get(
+                    wrapper_key
+                )
+
+                if isinstance(
+                    wrapped,
+                    list
+                ):
+
+                    data = wrapped
+
+                    break
 
         if isinstance(
             data,
@@ -847,6 +899,16 @@ class ParkSmartController:
                 continue
 
             if not company_id:
+                continue
+
+            # An explicitly disabled tag is left out of the map, so
+            # it resolves exactly like an unknown tag: VISITOR on the
+            # LED and no gate pulse.
+            if not item.get(
+                "enabled",
+                True
+            ):
+
                 continue
 
             new_tag_map[
@@ -1147,12 +1209,87 @@ class ParkSmartController:
             )
         )
 
-        for company in self.companies:
+        return self.companies_by_id.get(
+            company_id.upper()
+        )
 
-            if company.id == company_id:
-                return company
+    # ========================================================
+    # TAG IDENTITY  ->  LED PANELS
+    # ========================================================
 
-        return None
+    def resolve_tag_identity(
+        self,
+        tag_item
+    ):
+        """
+        Collapse a tags.json record into exactly the two strings the
+        LED needs, plus whether the tag matched at all:
+
+            (car_number, status_text, registered)
+
+        car_number  -> upper panel
+        status_text -> lower panel (owner name, else REGISTERED,
+                       else VISITOR for an unmatched tag)
+
+        The tag id is never returned by design — it must not appear
+        on the panel. This is the only place the tags.json field
+        aliases are interpreted, so the log line and both LED panels
+        can never disagree about a vehicle.
+        """
+
+        if not tag_item:
+
+            return "", "VISITOR", False
+
+        car_number = str(
+            tag_item.get(
+                "car_number",
+                tag_item.get(
+                    "vehicle_number",
+                    tag_item.get("owner_car_number", "")
+                )
+            )
+            or ""
+        ).strip().upper()
+
+        # "owner" is a name on current records but was a boolean in
+        # older tags.json files — only use it as a label when it is
+        # actually text.
+        owner_value = tag_item.get(
+            "owner",
+            tag_item.get(
+                "owner_name",
+                tag_item.get("is_owner", False)
+            )
+        )
+
+        owner_name = (
+            str(owner_value).strip()
+            if isinstance(owner_value, str)
+            else ""
+        )
+
+        role = str(
+            tag_item.get(
+                "status",
+                tag_item.get(
+                    "rfid_status",
+                    tag_item.get("role", "")
+                )
+            )
+            or ""
+        ).strip().upper()
+
+        if owner_name:
+            status_text = owner_name
+
+        elif role == "OWNER":
+            status_text = "OWNER"
+
+        else:
+            status_text = "REGISTERED"
+
+        return car_number, status_text, True
 
     # ========================================================
     # DEVICES
@@ -1638,12 +1775,6 @@ class ParkSmartController:
 
             return
 
-        logger.info(
-            "%s TAG READ | %s",
-            direction,
-            tag_id
-        )
-
         # ----------------------------------------------------
         # Duplicate
         # ----------------------------------------------------
@@ -1671,45 +1802,15 @@ class ParkSmartController:
             tag_id
         )
 
-        vehicle_number = str(
-            tag_item.get(
-                "car_number",
-                tag_item.get(
-                    "vehicle_number",
-                    tag_item.get("owner_car_number", "")
-                )
+        vehicle_number, rfid_status, _ = (
+            self.resolve_tag_identity(
+                tag_item
             )
-            or ""
-        ).strip().upper() if tag_item else ""
-
-        role = str(
-            tag_item.get(
-                "status",
-                tag_item.get(
-                    "rfid_status",
-                    tag_item.get("role", "")
-                )
-            )
-            or ""
-        ).strip().upper() if tag_item else ""
-
-        owner_value = (
-            tag_item.get(
-                "owner",
-                tag_item.get("is_owner", False)
-            )
-            if tag_item
-            else False
         )
 
-        rfid_status = (
-            "OWNER"
-            if owner_value or role == "OWNER"
-            else "REGISTERED"
-            if tag_item
-            else "VISITOR"
-        )
-
+        # One line per tag event carrying the whole resolution —
+        # the raw read is not logged separately, to keep the
+        # operational output readable under continuous reads.
         logger.info(
             "%s TAG RESOLUTION | TAG=%s | CAR=%s | STATUS=%s",
             direction,
@@ -1752,7 +1853,7 @@ class ParkSmartController:
                 tag_id,
                 None,
                 False,
-                self.tag_map.get(tag_id)
+                    tag_item
             )
 
             self.publish_mqtt_event(
@@ -1765,7 +1866,7 @@ class ParkSmartController:
             self.record_vehicle_event(
                 direction,
                 tag_id,
-                self.tag_map.get(tag_id),
+                    tag_item,
                 None,
                 authorized=False
             )
@@ -1798,7 +1899,7 @@ class ParkSmartController:
                     tag_id,
                     company,
                     False,
-                    self.tag_map.get(tag_id)
+                    tag_item
                 )
 
                 self.publish_mqtt_event(
@@ -1811,7 +1912,7 @@ class ParkSmartController:
                 self.record_vehicle_event(
                     direction,
                     tag_id,
-                    self.tag_map.get(tag_id),
+                    tag_item,
                     company,
                     authorized=False
                 )
@@ -1867,7 +1968,7 @@ class ParkSmartController:
             tag_id,
             company,
             True,
-            self.tag_map.get(tag_id)
+            tag_item
         )
 
         self.publish_mqtt_event(
@@ -1880,7 +1981,7 @@ class ParkSmartController:
         self.record_vehicle_event(
             direction,
             tag_id,
-            self.tag_map.get(tag_id),
+            tag_item,
             company,
             authorized=True
         )
@@ -1969,12 +2070,59 @@ class ParkSmartController:
     # LED
     # ========================================================
 
+    def _set_led_state(
+        self,
+        mode,
+        event=None
+    ):
+        """
+        Record which screen the panels are currently showing, and
+        when it was set. The refresh thread reads this to decide
+        between re-asserting the current screen and falling back to
+        the parking name once a tag event has been on screen long
+        enough.
+        """
+
+        with self.led_lock:
+
+            new_event = (
+                event
+                if event is not None
+                else self._last_led_event
+            )
+
+            # Restart the hold clock only when the screen actually
+            # changes. The refresh thread re-asserts the current
+            # screen on every tick, and must not keep pushing the
+            # fall-back-to-parking-name deadline further out.
+            if (
+                mode != self._last_led_mode
+                or new_event != self._last_led_event
+            ):
+
+                self._led_state_time = time.monotonic()
+
+            self._last_led_mode = mode
+            self._last_led_event = new_event
+
+    def _get_led_state(self):
+
+        with self.led_lock:
+
+            return (
+                self._last_led_mode,
+                self._last_led_event,
+                self._led_state_time
+            )
+
     def show_parking_status(
         self,
         force=False
     ):
 
-        self._last_led_mode = "parking"
+        self._set_led_state(
+            "parking"
+        )
 
         companies_payload = [
 
@@ -2005,7 +2153,11 @@ class ParkSmartController:
                 ),
                 companies=companies_payload,
                 reason="parking_status",
-                display_mode="parking",
+                display_mode=(
+                    "parking_summary"
+                    if config_key == "led"
+                    else "parking"
+                ),
                 force=force
             )
 
@@ -2016,14 +2168,16 @@ class ParkSmartController:
         force=False
     ):
 
-        self._last_led_event = (
-            direction,
-            tag_id,
-            None,
-            False,
-            None
+        self._set_led_state(
+            "full",
+            (
+                direction,
+                tag_id,
+                None,
+                False,
+                None
+            )
         )
-        self._last_led_mode = "full"
 
         companies_payload = [
 
@@ -2046,33 +2200,29 @@ class ParkSmartController:
             tag_id
         )
 
-        if self.led is not None:
+        for display, config_key in (
+            (self.led, "led"),
+            (self.led2, "led2")
+        ):
 
-            self.led.update_async(
+            if display is None:
+                continue
+
+            display.update_async(
                 parking_name=self.config.get(
-                    "led", {}
+                    config_key,
+                    {}
                 ).get(
                     "mall_name",
                     "PARK SMART"
                 ),
                 companies=companies_payload,
                 reason=reason,
-                display_mode="full",
-                force=force
-            )
-
-        if self.led2 is not None:
-
-            self.led2.update_async(
-                parking_name=self.config.get(
-                    "led2", {}
-                ).get(
-                    "mall_name",
-                    "PARK SMART"
+                display_mode=(
+                    "parking_summary"
+                    if config_key == "led"
+                    else "full"
                 ),
-                companies=companies_payload,
-                reason=reason,
-                display_mode="full",
                 force=force
             )
 
@@ -2092,14 +2242,16 @@ class ParkSmartController:
         if self.led is None and self.led2 is None:
             return
 
-        self._last_led_event = (
-            direction,
-            tag_id,
-            company,
-            authorized,
-            tag_item
+        self._set_led_state(
+            "rfid",
+            (
+                direction,
+                tag_id,
+                company,
+                authorized,
+                tag_item
+            )
         )
-        self._last_led_mode = "rfid"
 
         # Important:
         # LED network failure must NOT stop UHF.
@@ -2126,58 +2278,25 @@ class ParkSmartController:
             "vehicle" if authorized else "denied"
         )
 
-        vehicle_number = ""
-        rfid_status = "VISITOR"
-
-        if tag_item:
-
-            vehicle_number = str(
-                tag_item.get(
-                    "car_number",
-                    tag_item.get(
-                        "vehicle_number",
-                        tag_item.get("owner_car_number", "")
-                    )
-                )
-                or ""
-            ).strip().upper()
-
-            owner_value = tag_item.get(
-                "owner",
-                tag_item.get("is_owner", False)
+        vehicle_number, rfid_status, registered = (
+            self.resolve_tag_identity(
+                tag_item
             )
-
-            role = str(
-                tag_item.get(
-                    "status",
-                    tag_item.get(
-                        "rfid_status",
-                        tag_item.get("role", "")
-                    )
-                )
-                or ""
-            ).strip().upper()
-
-            rfid_status = (
-                "OWNER"
-                if owner_value or role == "OWNER"
-                else "REGISTERED"
-            )
+        )
 
         if self.led is not None:
 
             self.led.update_async(
                 parking_name=self.config.get(
-                    "led", {}
+                    "led",
+                    {}
                 ).get(
                     "mall_name",
                     "PARK SMART"
                 ),
                 companies=companies_payload,
                 reason=reason,
-                vehicle_number=vehicle_number,
-                rfid_status=rfid_status,
-                display_mode="rfid",
+                display_mode="parking_summary",
                 force=force
             )
 
@@ -2185,7 +2304,8 @@ class ParkSmartController:
 
             self.led2.update_async(
                 parking_name=self.config.get(
-                    "led2", {}
+                    "led2",
+                    {}
                 ).get(
                     "mall_name",
                     "PARK SMART"
@@ -2195,6 +2315,7 @@ class ParkSmartController:
                 vehicle_number=vehicle_number,
                 rfid_status=rfid_status,
                 display_mode="rfid",
+                registered=registered,
                 force=force
             )
 
@@ -2393,24 +2514,30 @@ class ParkSmartController:
                     reader is not None and reader.sock is not None
                 )
 
-            if self.led is not None:
+            for name, display in (
+                ("LED", self.led),
+                ("LED2", self.led2)
+            ):
+
+                if display is None:
+                    continue
+
+                # Prefer the outcome of the last real LED send. Only
+                # probe the port when that is stale, so this loop
+                # never holds the panel's single TCP slot while a
+                # tag event is trying to push a screen to it.
+                online = display.status()
+
+                if online is None:
+
+                    online = self._tcp_online(
+                        display.ip,
+                        display.port
+                    )
 
                 self._report_device_status(
-                    "LED",
-                    self._tcp_online(
-                        self.led.ip,
-                        self.led.port
-                    )
-                )
-
-            if self.led2 is not None:
-
-                self._report_device_status(
-                    "LED2",
-                    self._tcp_online(
-                        self.led2.ip,
-                        self.led2.port
-                    )
+                    name,
+                    online
                 )
 
             relay_client = (
@@ -2434,14 +2561,35 @@ class ParkSmartController:
             )
 
     def _led_refresh_loop(self):
+        """
+        Keeps the panels asserting whatever the last event decided,
+        and drops back to the parking name once a tag event has had
+        its time on screen.
+
+        This loop never originates a tag screen — handle_tag() pushes
+        those out itself the moment a tag is processed. Every send
+        here is deduplicated inside LEDDisplay.update_async(), so an
+        unchanged screen costs nothing on the wire; the repeat only
+        exists to recover a panel that was offline or power-cycled
+        while the screen was current.
+        """
+
+        controller_cfg = self.config.get(
+            "controller",
+            {}
+        )
 
         interval = float(
-            self.config.get(
-                "controller",
-                {}
-            ).get(
+            controller_cfg.get(
                 "led_refresh_seconds",
                 3
+            )
+        )
+
+        hold_seconds = float(
+            controller_cfg.get(
+                "led_hold_seconds",
+                5
             )
         )
 
@@ -2449,26 +2597,41 @@ class ParkSmartController:
 
             try:
 
-                if self._last_led_mode == "full":
+                mode, event, state_time = self._get_led_state()
 
-                    direction, tag_id, _, _, _ = self._last_led_event
+                # No tag being processed any more -> parking name.
+                if (
+                    mode != "parking"
+                    and (time.monotonic() - state_time)
+                    >= hold_seconds
+                ):
+
+                    self.show_parking_status(
+                        force=False
+                    )
+
+                    continue
+
+                if mode == "full":
+
+                    direction, tag_id, _, _, _ = event
 
                     self.show_parking_full(
                         direction,
                         tag_id,
-                        force=True
+                        force=False
                     )
 
-                elif self._last_led_mode == "parking":
+                elif mode == "parking":
 
                     self.show_parking_status(
-                        force=True
+                        force=False
                     )
 
                 else:
 
                     direction, tag_id, company, authorized, tag_item = (
-                        self._last_led_event
+                        event
                     )
 
                     self.update_led_event(
@@ -2477,7 +2640,7 @@ class ParkSmartController:
                         company,
                         authorized,
                         tag_item,
-                        force=True
+                        force=False
                     )
 
             except Exception:

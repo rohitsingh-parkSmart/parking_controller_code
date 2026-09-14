@@ -284,30 +284,24 @@ class UHFReader:
 
         try:
 
-            self.log(
-                "debug",
-                "%s RAW HEX | %s",
-                self.direction,
-                frame.hex(" ").upper()
-            )
+            if self.logger.isEnabledFor(logging.DEBUG):
 
-            try:
-
-                ascii_data = frame.decode(
-                    "ascii",
-                    errors="replace"
+                self.log(
+                    "debug",
+                    "%s RAW HEX | %s",
+                    self.direction,
+                    frame.hex(" ").upper()
                 )
 
-            except Exception:
-
-                ascii_data = ""
-
-            self.log(
-                "debug",
-                "%s RAW ASCII | %s",
-                self.direction,
-                ascii_data
-            )
+                self.log(
+                    "debug",
+                    "%s RAW ASCII | %s",
+                    self.direction,
+                    frame.decode(
+                        "ascii",
+                        errors="replace"
+                    )
+                )
 
             tag_id = self.extract_tag(
                 frame
