@@ -323,16 +323,8 @@ class UHFReader:
 
                 return
 
-            self.log(
-                "info",
-                "%s TAG DETECTED | %s",
-                self.direction,
-                tag_id
-            )
-
-            # Note: main.py's handle_tag() also logs a
-            # "TAG READ" line for this same tag, so we don't
-            # duplicate that log entry here.
+            # The controller logs the tag once together with its
+            # authorization result; avoid a duplicate line here.
 
             if self.callback:
 

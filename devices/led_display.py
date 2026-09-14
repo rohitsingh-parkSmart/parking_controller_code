@@ -34,6 +34,9 @@ class LEDDisplay:
 
         self.lock = threading.Lock()
 
+        self._last_payload = None
+        self._payload_lock = threading.Lock()
+
     # ---------------------------------------------------------
     # TEXT WIDTH
     # ---------------------------------------------------------
@@ -311,6 +314,19 @@ class LEDDisplay:
             display_mode=display_mode
         )
 
+        payload_key = json.dumps(
+            payload,
+            separators=(",", ":"),
+            sort_keys=True
+        )
+
+        with self._payload_lock:
+
+            if payload_key == self._last_payload:
+                return False
+
+            self._last_payload = payload_key
+
         thread = threading.Thread(
             target=self._update_worker,
             args=(payload, reason),
@@ -319,27 +335,30 @@ class LEDDisplay:
 
         thread.start()
 
+        return True
+
     def _update_worker(
         self,
         payload,
         reason
     ):
 
-        self.logger.info(
-            "LED UPDATE | reason=%s",
-            reason
-        )
-
         if self.send(payload):
 
-            self.logger.info(
-                "LED DISPLAY UPDATED | reason=%s",
-                reason
+            return
+
+        with self._payload_lock:
+
+            payload_key = json.dumps(
+                payload,
+                separators=(",", ":"),
+                sort_keys=True
             )
 
-        else:
+            if self._last_payload == payload_key:
+                self._last_payload = None
 
-            self.logger.error(
-                "LED UPDATE FAILED | reason=%s",
-                reason
-            )
+        self.logger.error(
+            "LED UPDATE FAILED | reason=%s",
+            reason
+        )

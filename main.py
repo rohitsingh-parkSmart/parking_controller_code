@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -168,9 +169,9 @@ DEFAULT_CONFIG = {
     },
 
     "led2": {
-        "enabled": False,
+        "enabled": True,
 
-        "ip": "192.168.100.74",
+        "ip": "192.168.100.10",
         "port": 8000,
 
         "mall_name": "DYP City Mall",
@@ -646,6 +647,8 @@ class ParkSmartController:
 
         self.led_lock = threading.Lock()
 
+        self.transaction_lock = threading.Lock()
+
         self.led_thread = None
 
         self.entry_reader = None
@@ -665,6 +668,9 @@ class ParkSmartController:
         self._tags_mtime = None
         self._tags_sync_stop = threading.Event()
         self._applying_remote_tags = False
+        self._status_stop = threading.Event()
+        self._device_status = {}
+        self._device_status_lock = threading.Lock()
 
         self.load_vehicle_sessions()
 
@@ -675,6 +681,12 @@ class ParkSmartController:
         self.setup_devices()
 
         self.start_tag_sync()
+
+        threading.Thread(
+            target=self._device_status_loop,
+            name="DeviceStatus",
+            daemon=True
+        ).start()
 
     # ========================================================
     # COMPANIES
@@ -1580,6 +1592,18 @@ class ParkSmartController:
         direction="ENTRY"
     ):
 
+        with self.transaction_lock:
+            self._handle_tag_transaction(
+                tag_id,
+                direction
+            )
+
+    def _handle_tag_transaction(
+        self,
+        tag_id,
+        direction="ENTRY"
+    ):
+
         direction = str(
             direction
         ).upper()
@@ -1620,9 +1644,63 @@ class ParkSmartController:
 
             return
 
-        # Capacity is checked immediately after the RFID read so
-        # no entry tag can reach authorization or the relay when
-        # the entire parking area is full.
+        # ----------------------------------------------------
+        # Find authorized tag
+        # ----------------------------------------------------
+
+        tag_item = self.tag_map.get(tag_id)
+
+        company = self.find_company(
+            tag_id
+        )
+
+        vehicle_number = str(
+            tag_item.get(
+                "car_number",
+                tag_item.get(
+                    "vehicle_number",
+                    tag_item.get("owner_car_number", "")
+                )
+            )
+            or ""
+        ).strip().upper() if tag_item else ""
+
+        role = str(
+            tag_item.get(
+                "status",
+                tag_item.get(
+                    "rfid_status",
+                    tag_item.get("role", "")
+                )
+            )
+            or ""
+        ).strip().upper() if tag_item else ""
+
+        owner_value = (
+            tag_item.get(
+                "owner",
+                tag_item.get("is_owner", False)
+            )
+            if tag_item
+            else False
+        )
+
+        rfid_status = (
+            "OWNER"
+            if owner_value or role == "OWNER"
+            else "REGISTERED"
+            if tag_item
+            else "VISITOR"
+        )
+
+        logger.info(
+            "%s TAG RESOLUTION | TAG=%s | CAR=%s | STATUS=%s",
+            direction,
+            tag_id,
+            vehicle_number or "-",
+            rfid_status
+        )
+
         if direction == "ENTRY":
 
             filled, capacity = self.total_occupancy()
@@ -1642,14 +1720,6 @@ class ParkSmartController:
                 )
 
                 return
-
-        # ----------------------------------------------------
-        # Find authorized tag
-        # ----------------------------------------------------
-
-        company = self.find_company(
-            tag_id
-        )
 
         if company is None:
 
@@ -1731,41 +1801,34 @@ class ParkSmartController:
 
                 return
 
+        # ----------------------------------------------------
+        # Relay
+        # ----------------------------------------------------
+
+        if not self.trigger_relay(
+            direction,
+            tag_id
+        ):
+
+            logger.error(
+                "%s TRANSACTION ABORTED | relay failed | TAG=%s",
+                direction,
+                tag_id
+            )
+
+            return
+
+        if direction == "ENTRY":
             updated = company.entry()
-
         else:
-
             updated = company.exit()
 
         if not updated:
 
-            logger.warning(
-                "%s OCCUPANCY UPDATE FAILED | %s",
+            logger.error(
+                "%s TRANSACTION ABORTED | occupancy update failed | TAG=%s",
                 direction,
-                company.name
-            )
-
-            self.update_led_event(
-                direction,
-                tag_id,
-                company,
-                False,
-                self.tag_map.get(tag_id)
-            )
-
-            self.publish_mqtt_event(
-                direction,
-                tag_id,
-                company,
-                authorized=False
-            )
-
-            self.record_vehicle_event(
-                direction,
-                tag_id,
-                self.tag_map.get(tag_id),
-                company,
-                authorized=False
+                tag_id
             )
 
             return
@@ -1779,7 +1842,7 @@ class ParkSmartController:
         )
 
         # ----------------------------------------------------
-        # LED
+        # LED and event publication
         # ----------------------------------------------------
 
         self.update_led_event(
@@ -1804,16 +1867,6 @@ class ParkSmartController:
             company,
             authorized=True
         )
-
-        # ----------------------------------------------------
-        # Relay
-        # ----------------------------------------------------
-
-        threading.Thread(
-            target=self.trigger_relay,
-            args=(direction, tag_id),
-            daemon=True
-        ).start()
 
     # ========================================================
     # MQTT
@@ -2116,6 +2169,11 @@ class ParkSmartController:
                 exc
             )
 
+            return False
+
+        if not result:
+            return False
+
         # ----------------------------------------------------
         # Traffic light — pulse GREEN whenever a tag is
         # matched (trigger_relay is only ever called from
@@ -2128,7 +2186,7 @@ class ParkSmartController:
             # Deployed ModbusRelay hasn't been updated with
             # the trigger_light() method yet — skip quietly
             # rather than crash the whole tag event.
-            return
+            return True
 
         try:
 
@@ -2162,6 +2220,8 @@ class ParkSmartController:
                 exc
             )
 
+        return True
+
     # ========================================================
     # TOTAL OCCUPANCY
     # ========================================================
@@ -2183,6 +2243,101 @@ class ParkSmartController:
         return filled, capacity
 
     # ========================================================
+    # DEVICE STATUS
+    # ========================================================
+
+    def _report_device_status(self, name, online):
+
+        now = time.monotonic()
+        state = "ONLINE" if online else "OFFLINE"
+
+        with self._device_status_lock:
+
+            previous = self._device_status.get(name)
+
+            if (
+                previous
+                and previous[0] == state
+                and now - previous[1] < 10
+            ):
+                return
+
+            self._device_status[name] = (state, now)
+
+        logger.info(
+            "DEVICE STATUS | %s | %s",
+            name,
+            state
+        )
+
+    def _tcp_online(self, host, port):
+
+        try:
+
+            with socket.create_connection(
+                (host, int(port)),
+                timeout=1
+            ):
+                return True
+
+        except OSError:
+            return False
+
+    def _device_status_loop(self):
+
+        while not self._status_stop.wait(10):
+
+            for name, reader in (
+                ("ENTRY READER", self.entry_reader),
+                ("EXIT READER", self.exit_reader)
+            ):
+
+                self._report_device_status(
+                    name,
+                    reader is not None and reader.sock is not None
+                )
+
+            if self.led is not None:
+
+                self._report_device_status(
+                    "LED",
+                    self._tcp_online(
+                        self.led.ip,
+                        self.led.port
+                    )
+                )
+
+            if self.led2 is not None:
+
+                self._report_device_status(
+                    "LED2",
+                    self._tcp_online(
+                        self.led2.ip,
+                        self.led2.port
+                    )
+                )
+
+            relay_client = (
+                self.relay.client
+                if self.relay is not None
+                else None
+            )
+
+            relay_online = False
+
+            if relay_client is not None:
+
+                try:
+                    relay_online = relay_client.is_socket_open()
+                except Exception:
+                    relay_online = False
+
+            self._report_device_status(
+                "MODBUS",
+                relay_online
+            )
+
+    # ========================================================
     # STOP
     # ========================================================
 
@@ -2196,6 +2351,7 @@ class ParkSmartController:
         STOP_EVENT.set()
 
         self._tags_sync_stop.set()
+        self._status_stop.set()
 
         logger.info(
             "PARKSMART STOPPING"
