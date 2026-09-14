@@ -681,7 +681,7 @@ class ParkSmartController:
             False,
             None
         )
-        self._last_led_mode = "normal"
+        self._last_led_mode = "parking"
 
         self.load_vehicle_sessions()
 
@@ -1969,6 +1969,46 @@ class ParkSmartController:
     # LED
     # ========================================================
 
+    def show_parking_status(
+        self,
+        force=False
+    ):
+
+        self._last_led_mode = "parking"
+
+        companies_payload = [
+
+            {
+                "name": c.name,
+                "capacity": c.capacity,
+                "occupancy": c.filled
+            }
+
+            for c in self.companies
+        ]
+
+        for display, config_key in (
+            (self.led, "led"),
+            (self.led2, "led2")
+        ):
+
+            if display is None:
+                continue
+
+            display.update_async(
+                parking_name=self.config.get(
+                    config_key,
+                    {}
+                ).get(
+                    "mall_name",
+                    "PARK SMART"
+                ),
+                companies=companies_payload,
+                reason="parking_status",
+                display_mode="parking",
+                force=force
+            )
+
     def show_parking_full(
         self,
         direction,
@@ -2059,7 +2099,7 @@ class ParkSmartController:
             authorized,
             tag_item
         )
-        self._last_led_mode = "normal"
+        self._last_led_mode = "rfid"
 
         # Important:
         # LED network failure must NOT stop UHF.
@@ -2135,7 +2175,9 @@ class ParkSmartController:
                 ),
                 companies=companies_payload,
                 reason=reason,
-                display_mode="parking",
+                vehicle_number=vehicle_number,
+                rfid_status=rfid_status,
+                display_mode="rfid",
                 force=force
             )
 
@@ -2414,6 +2456,12 @@ class ParkSmartController:
                     self.show_parking_full(
                         direction,
                         tag_id,
+                        force=True
+                    )
+
+                elif self._last_led_mode == "parking":
+
+                    self.show_parking_status(
                         force=True
                     )
 
