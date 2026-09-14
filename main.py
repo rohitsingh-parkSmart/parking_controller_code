@@ -208,7 +208,9 @@ DEFAULT_CONFIG = {
 
         "led_enabled": True,
 
-        "led_queue_delay": 0.05
+        "led_queue_delay": 0.05,
+
+        "led_refresh_seconds": 3
     },
 
     "companies": [
@@ -671,6 +673,15 @@ class ParkSmartController:
         self._status_stop = threading.Event()
         self._device_status = {}
         self._device_status_lock = threading.Lock()
+        self._led_refresh_stop = threading.Event()
+        self._last_led_event = (
+            "UPDATE",
+            "",
+            None,
+            False,
+            None
+        )
+        self._last_led_mode = "normal"
 
         self.load_vehicle_sessions()
 
@@ -685,6 +696,12 @@ class ParkSmartController:
         threading.Thread(
             target=self._device_status_loop,
             name="DeviceStatus",
+            daemon=True
+        ).start()
+
+        threading.Thread(
+            target=self._led_refresh_loop,
+            name="LEDRefresh",
             daemon=True
         ).start()
 
@@ -1955,8 +1972,18 @@ class ParkSmartController:
     def show_parking_full(
         self,
         direction,
-        tag_id
+        tag_id,
+        force=False
     ):
+
+        self._last_led_event = (
+            direction,
+            tag_id,
+            None,
+            False,
+            None
+        )
+        self._last_led_mode = "full"
 
         companies_payload = [
 
@@ -1990,7 +2017,8 @@ class ParkSmartController:
                 ),
                 companies=companies_payload,
                 reason=reason,
-                display_mode="full"
+                display_mode="full",
+                force=force
             )
 
         if self.led2 is not None:
@@ -2004,7 +2032,8 @@ class ParkSmartController:
                 ),
                 companies=companies_payload,
                 reason=reason,
-                display_mode="full"
+                display_mode="full",
+                force=force
             )
 
     def update_led_event(
@@ -2013,7 +2042,8 @@ class ParkSmartController:
         tag_id,
         company,
         authorized,
-        tag_item=None
+        tag_item=None,
+        force=False
     ):
 
         # Only bail out entirely if NEITHER panel is configured.
@@ -2021,6 +2051,15 @@ class ParkSmartController:
         # update that one.
         if self.led is None and self.led2 is None:
             return
+
+        self._last_led_event = (
+            direction,
+            tag_id,
+            company,
+            authorized,
+            tag_item
+        )
+        self._last_led_mode = "normal"
 
         # Important:
         # LED network failure must NOT stop UHF.
@@ -2096,7 +2135,8 @@ class ParkSmartController:
                 ),
                 companies=companies_payload,
                 reason=reason,
-                display_mode="parking"
+                display_mode="parking",
+                force=force
             )
 
         if self.led2 is not None:
@@ -2112,7 +2152,8 @@ class ParkSmartController:
                 reason=reason,
                 vehicle_number=vehicle_number,
                 rfid_status=rfid_status,
-                display_mode="rfid"
+                display_mode="rfid",
+                force=force
             )
 
     # ========================================================
@@ -2337,6 +2378,53 @@ class ParkSmartController:
                 relay_online
             )
 
+    def _led_refresh_loop(self):
+
+        interval = float(
+            self.config.get(
+                "controller",
+                {}
+            ).get(
+                "led_refresh_seconds",
+                3
+            )
+        )
+
+        while not self._led_refresh_stop.wait(interval):
+
+            try:
+
+                if self._last_led_mode == "full":
+
+                    direction, tag_id, _, _, _ = self._last_led_event
+
+                    self.show_parking_full(
+                        direction,
+                        tag_id,
+                        force=True
+                    )
+
+                else:
+
+                    direction, tag_id, company, authorized, tag_item = (
+                        self._last_led_event
+                    )
+
+                    self.update_led_event(
+                        direction,
+                        tag_id,
+                        company,
+                        authorized,
+                        tag_item,
+                        force=True
+                    )
+
+            except Exception:
+
+                logger.exception(
+                    "LED PERIODIC REFRESH ERROR"
+                )
+
     # ========================================================
     # STOP
     # ========================================================
@@ -2352,6 +2440,7 @@ class ParkSmartController:
 
         self._tags_sync_stop.set()
         self._status_stop.set()
+        self._led_refresh_stop.set()
 
         logger.info(
             "PARKSMART STOPPING"

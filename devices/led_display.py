@@ -58,7 +58,7 @@ class LEDDisplay:
         self,
         text,
         color="green",
-        bold=False,
+        bold=True,
         scroll=None
     ):
 
@@ -303,7 +303,8 @@ class LEDDisplay:
         reason="update",
         vehicle_number="",
         rfid_status="",
-        display_mode="parking"
+        display_mode="parking",
+        force=False
     ):
 
         payload = self.build_payload(
@@ -322,7 +323,7 @@ class LEDDisplay:
 
         with self._payload_lock:
 
-            if payload_key == self._last_payload:
+            if not force and payload_key == self._last_payload:
                 return False
 
             self._last_payload = payload_key
