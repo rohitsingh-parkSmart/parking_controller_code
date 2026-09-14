@@ -2229,6 +2229,21 @@ class ParkSmartController:
             # rather than crash the whole tag event.
             return True
 
+        threading.Thread(
+            target=self._trigger_light_async,
+            args=(direction, tag_id),
+            name="TrafficLight",
+            daemon=True
+        ).start()
+
+        return True
+
+    def _trigger_light_async(
+        self,
+        direction,
+        tag_id
+    ):
+
         try:
 
             light_result = self.relay.trigger_light(
@@ -2260,8 +2275,6 @@ class ParkSmartController:
                 tag_id,
                 exc
             )
-
-        return True
 
     # ========================================================
     # TOTAL OCCUPANCY
